@@ -1,6 +1,6 @@
-# Kortbyte v1.0.1.0 — Neon migration
+# Kortbyte v1.1.0.0 — Neon migration
 
-Kortbyte är en mobilvänlig bytesplattform för samlarkort. v1.0.1 flyttar backend-grunden från Supabase till **Neon Postgres + Neon Auth**.
+Kortbyte är en mobilvänlig bytesplattform för samlarkort. v1.1.0 flyttar backend-grunden från Supabase till **Neon Postgres + Neon Auth**.
 
 ## Vad som är nytt
 - Neon Auth i stället för Supabase Auth.
@@ -32,11 +32,21 @@ Projekt: **Kortbyte** i AWS Europe Central 1 (Frankfurt). Neon Auth är aktivera
 
 ## Viktigt
 - Lägg aldrig `.env.local` i Git.
-- Kortbilder är inte migrerade i v1.0.1. Neon är databas/Auth, inte objektlagring. Bildlagring kopplas i en separat release.
-- Chat, leveransbekräftelser, omdömen och notiser finns i datamodellen men v1.0.1 fokuserar på att få den nya backendkedjan stabil först.
+- Kortbilder är inte migrerade i v1.1.0. Neon är databas/Auth, inte objektlagring. Bildlagring kopplas i en separat release.
+- Chat, leveransbekräftelser, omdömen och notiser finns i datamodellen men v1.1.0 fokuserar på att få den nya backendkedjan stabil först.
 
 
-## v1.0.1
+## v1.1.0
 - Rättar Neon Auth till aktuell `@neondatabase/auth` 0.5.0-beta.
 - Synkar React och React DOM till 19.2.8.
 - Vid uppgradering från äldre lokal version: radera `node_modules` och `package-lock.json` före `npm install` för att undvika gamla peer dependencies.
+
+
+## v1.1 bytesflöde
+- Acceptera, avböj och dra tillbaka bytesförslag.
+- Motbud skapas som kopplat nytt förslag så historiken finns kvar.
+- Kort låses när byte accepteras.
+- Inbyggd chat per byte.
+- Båda markerar skickat och mottaget.
+- Byte slutförs automatiskt när båda mottagit; korten blir då inaktiva.
+- Omdöme 1–5 efter slutfört byte.

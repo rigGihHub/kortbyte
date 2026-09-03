@@ -12,7 +12,25 @@ export async function POST(req: NextRequest) {
   const [p] = await sql`select plan from profiles where user_id=${user.id}`;
   const [{ count }] = await sql`select count(*)::int as count from cards where owner_id=${user.id} and is_active=true`;
   if ((p?.plan ?? 'free')==='free' && Number(count)>=5) return NextResponse.json({ error:'Gratisplanen tillåter 5 aktiva kort.' }, {status:403});
-  const [card] = await sql`insert into cards(owner_id,title,category,card_set,card_year,estimated_value_sek) values (${user.id},${title},${String(body.category||'Övrigt')},${body.card_set||null},${body.card_year||null},${body.estimated_value_sek ? Number(body.estimated_value_sek):null}) returning *`;
+  const imageUrl = typeof body.image_url==='string' && body.image_url.startsWith('https://') ? body.image_url : null;
+  const clean=(value:unknown,max=160)=>{
+    const v=typeof value==='string'?value.trim():'';
+    return v?v.slice(0,max):null;
+  };
+  const grade=body.grade===''||body.grade==null?null:Number(body.grade);
+  if(grade!==null && (!Number.isFinite(grade)||grade<0||grade>10)){
+    return NextResponse.json({error:'Graderingsbetyget måste vara mellan 0 och 10.'},{status:400});
+  }
+  const [card] = await sql`
+    insert into cards(
+      owner_id,title,player_name,category,card_set,card_year,card_number,parallel,
+      serial_number,grading_company,grade,estimated_value_sek,image_url
+    ) values (
+      ${user.id},${title},${clean(body.player_name,120)},${String(body.category||'Övrigt')},
+      ${clean(body.card_set)},${clean(body.card_year,20)},${clean(body.card_number,40)},
+      ${clean(body.parallel,100)},${clean(body.serial_number,40)},${clean(body.grading_company,40)},
+      ${grade},${body.estimated_value_sek ? Number(body.estimated_value_sek):null},${imageUrl}
+    ) returning *`;
   return NextResponse.json(card);
 }
 

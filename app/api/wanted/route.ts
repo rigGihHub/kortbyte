@@ -12,7 +12,18 @@ export async function POST(req: NextRequest) {
   const [p]=await sql`select plan from profiles where user_id=${user.id}`;
   const [{count}]=await sql`select count(*)::int as count from wanted_cards where user_id=${user.id}`;
   if ((p?.plan ?? 'free')==='free' && Number(count)>=10) return NextResponse.json({error:'Gratisplanen tillåter 10 sökningar.'},{status:403});
-  const [item]=await sql`insert into wanted_cards(user_id,query,category) values (${user.id},${query},${body.category||null}) returning *`;
+  const clean=(value:unknown,max=160)=>{
+    const v=typeof value==='string'?value.trim():'';
+    return v?v.slice(0,max):null;
+  };
+  const [item]=await sql`
+    insert into wanted_cards(
+      user_id,query,category,player_name,card_year,card_set,card_number,parallel
+    ) values (
+      ${user.id},${query},${body.category||null},${clean(body.player_name,120)},
+      ${clean(body.card_year,20)},${clean(body.card_set)},${clean(body.card_number,40)},
+      ${clean(body.parallel,100)}
+    ) returning *`;
   return NextResponse.json(item);
 }
 

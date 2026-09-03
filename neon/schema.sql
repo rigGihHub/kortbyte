@@ -13,8 +13,14 @@ create table if not exists cards (
   id uuid primary key default gen_random_uuid(),
   owner_id text not null references profiles(user_id) on delete cascade,
   title text not null,
+  player_name text,
   card_set text,
   card_year text,
+  card_number text,
+  parallel text,
+  serial_number text,
+  grading_company text,
+  grade numeric,
   category text not null default 'Övrigt',
   estimated_value_sek numeric,
   image_url text,
@@ -30,6 +36,11 @@ create table if not exists wanted_cards (
   user_id text not null references profiles(user_id) on delete cascade,
   query text not null,
   category text,
+  player_name text,
+  card_year text,
+  card_set text,
+  card_number text,
+  parallel text,
   created_at timestamptz not null default now()
 );
 create index if not exists wanted_user_idx on wanted_cards(user_id,created_at desc);
@@ -88,3 +99,6 @@ create table if not exists trade_reviews (
 
 -- v1.0 accesses application tables only from authenticated Next.js server routes.
 -- Do not expose DATABASE_URL in browser code.
+
+create index if not exists cards_identity_idx on cards(is_active,category,player_name,card_year,card_set,card_number);
+create index if not exists wanted_identity_idx on wanted_cards(user_id,category,player_name,card_year,card_set,card_number);

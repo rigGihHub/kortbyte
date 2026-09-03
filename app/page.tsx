@@ -99,7 +99,7 @@ export default function Home(){
 
  async function refresh(){ if(!live)return; setBusy(true); try{const r=await fetch('/api/dashboard',{cache:'no-store'}); if(!r.ok)throw new Error((await r.json()).error||'Kunde inte läsa data'); setData(await r.json());}catch(e){setNotice(e instanceof Error?e.message:'Fel');}finally{setBusy(false);} }
  useEffect(()=>{if(live)void refresh(); else setData(demo);},[live]);
- const plan=data.profile?.plan??'free'; const active=data.cards.filter(c=>c.is_active!==false).length; const freeSlots=Math.max(0,5-active);
+ const plan=data.profile?.plan??'free'; const active=data.cards.filter(c=>c.is_active!==false).length; const freeSlots=Math.max(0,50-active);
  const mutualCount=useMemo(()=>data.matches.filter(m=>m.is_mutual).length,[data.matches]);
  const selectedOfferCards=useMemo(()=>data.cards.filter(c=>offerIds.includes(c.id)),[data.cards,offerIds]);
  const offeredValue=useMemo(()=>selectedOfferCards.reduce((sum,c)=>sum+Number(c.estimated_value_sek||0),0),[selectedOfferCards]);
@@ -222,10 +222,10 @@ export default function Home(){
     </button>)}
    </div>
   </div>}
-  <section className="hero"><div><span className="eyebrow"><Sparkles size={15}/>Smarta bytesmatchningar</span><h1>Byt kort med någon som faktiskt vill ha dina.</h1><p>Kortbyte matchar dina byteskort mot andra samlares söklistor och lyfter ömsesidiga matcher först.</p><div className="hero-actions"><button className="primary" onClick={()=>setCardOpen(true)}><Plus/>Lägg upp kort</button><button className="secondary" onClick={()=>setWantedOpen(true)}><Search/>Lägg till sökning</button></div></div><aside className="plan"><div><span>{plan.toUpperCase()}</span><Crown size={19}/></div><strong>{active} / {plan==='free'?'5':'∞'} aktiva byteskort</strong><small>{plan==='free'?`${freeSlots} gratisplatser kvar`:'Obegränsat med byteskort'}</small><hr/><b>Kortbyte Plus</b><small>29 kr/mån · 249 kr/år · kommer snart</small></aside></section>
+  <section className="hero"><div><span className="eyebrow"><Sparkles size={15}/>Smarta bytesmatchningar</span><h1>Byt kort med någon som faktiskt vill ha dina.</h1><p>Kortbyte matchar dina byteskort mot andra samlares söklistor och lyfter ömsesidiga matcher först.</p><div className="hero-actions"><button className="primary" onClick={()=>setCardOpen(true)}><Plus/>Lägg upp kort</button><button className="secondary" onClick={()=>setWantedOpen(true)}><Search/>Lägg till sökning</button></div></div><aside className="plan"><div><span>{plan.toUpperCase()}</span><Crown size={19}/></div><strong>{active} / {plan==='free'?'50':'∞'} aktiva byteskort</strong><small>{plan==='free'?`${freeSlots} gratisplatser kvar`:'Obegränsat med byteskort'}</small><hr/><b>Kortbyte Plus</b><small>29 kr/mån · 249 kr/år · kommer snart</small></aside></section>
   {!live&&<div className="demo-note"><ShieldCheck/><div><b>Demo-läge</b><span>Neon-versionen är redo. Logga in när miljövariablerna är kopplade för riktiga konton och databas.</span></div></div>}
   {notice&&<div className="notice">{notice}<button onClick={()=>setNotice('')}><X size={16}/></button></div>}
-  <nav className="tabs">  {!onboardingDone&&user&&<section className="onboarding-card">
+  {!onboardingDone&&session?.user&&<section className="onboarding-card">
    <div className="onboarding-copy"><span className="eyebrow">Kom igång</span><h2>Ge Kortbyte något att matcha</h2><small className="free-network-note">Gratis: upp till 50 aktiva kort</small><p>Lägg upp kort du kan byta bort och berätta vad du söker. Sedan letar Kortbyte efter personer där båda kan få något de vill ha.</p></div>
    <div className="onboarding-steps">
     <button className={onboardingCards>=3?'done':''} onClick={()=>setCardOpen(true)}><b>{onboardingCards>=3?'✓':'1'}</b><span><strong>Lägg upp 3 kort</strong><small>{onboardingCards}/3 klara</small></span></button>
@@ -233,7 +233,8 @@ export default function Home(){
     <div><b>3</b><span><strong>Kortbyte börjar leta</strong><small>Efter ömsesidiga matchningar</small></span></div>
    </div>
   </section>}
-<button className={tab==='match'?'active':''} onClick={()=>setTab('match')}>Matchningar <em>{data.matches.length}</em></button><button className={tab==='cards'?'active':''} onClick={()=>setTab('cards')}>Mina kort <em>{data.cards.length}</em></button><button className={tab==='wanted'?'active':''} onClick={()=>setTab('wanted')}>Jag söker <em>{data.wanted.length}</em></button><button className={tab==='trades'?'active':''} onClick={()=>setTab('trades')}>Mina byten <em>{data.trades.length}</em></button></nav>
+
+  <nav className="tabs"><button className={tab==='match'?'active':''} onClick={()=>setTab('match')}>Matchningar <em>{data.matches.length}</em></button><button className={tab==='cards'?'active':''} onClick={()=>setTab('cards')}>Mina kort <em>{data.cards.length}</em></button><button className={tab==='wanted'?'active':''} onClick={()=>setTab('wanted')}>Jag söker <em>{data.wanted.length}</em></button><button className={tab==='trades'?'active':''} onClick={()=>setTab('trades')}>Mina byten <em>{data.trades.length}</em></button></nav>
   {busy&&<div className="loading"><Loader2 className="spin"/>Uppdaterar…</div>}
   {tab==='match'&&<section><div className="section-title"><div><h2>Matchningar för dig</h2><p>{mutualCount?`${mutualCount} ömsesidig match hittad först.`:'Vi visar de kort som bäst matchar dina sökningar.'}</p></div><span className="badge"><Heart size={15}/>Ömsesidigt först</span></div><div className="grid">{data.matches.map(m=><article className={'match '+(m.is_mutual?'mutual':'')} key={m.id}><CardArt card={m}/><div className="match-body"><div className="match-top"><span className="score">{m.match_score??80}% match</span>{m.is_mutual&&<span className="mutual-pill"><CheckCircle2 size={14}/>Ömsesidig</span>}</div><small>{m.owner_name||'Samlare'}</small>
 <div className="trust-profile">

@@ -234,3 +234,9 @@ Projekt: **Kortbyte** i AWS Europe Central 1 (Frankfurt). Neon Auth är aktivera
 - Ny onboarding: 3 byteskort → 3 sökningar → ömsesidiga matchningar.
 - Plus ska vara ett kraftverktyg för storsamlare, inte blockera kärnflödet.
 - Ingen ny SQL-migration i v1.19. v1.18-migrationen krävs fortfarande.
+
+## v1.19.1 – Hotfix
+- Fixar `Runtime ReferenceError: user is not defined` i onboarding.
+- Onboarding-komponenten ligger nu utanför navigationsfältet i korrekt HTML-struktur.
+- Gratisgränsen är konsekvent 50 kort även i `freeSlots` och plan-kortet.
+- Ingen SQL-migration tillkommer.

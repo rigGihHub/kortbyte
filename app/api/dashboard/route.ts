@@ -113,6 +113,12 @@ function combinations<T>(items:T[], size:number):T[][]{
   return out;
 }
 
+function relevanceLevel(score:number){
+  if(score>=90)return 'Mycket stark relevans för motparten';
+  if(score>=75)return 'Stark relevans för motparten';
+  return 'Möjlig relevans för motparten';
+}
+
 function bundleLabel(total:number,target:number){
   const pct=Math.round(((total-target)/target)*100);
   if(Math.abs(pct)<=10)return {pct,label:'Nära i uppskattat värde'};
@@ -178,8 +184,8 @@ function buildBundleSuggestions(target:MatchCard, myCards:MatchCard[], counterpa
   if(mutualFit){
     const s=toSuggestion('mutual_fit',mutualFit.cards,Number(targetValue||0)||mutualFit.cards.reduce((n,c)=>n+Number(c.estimated_value_sek||0),0),
       `Prioriterar kort som matchar vad ${target.owner_name||'motparten'} faktiskt söker.`);
-    if(!targetValue){s.target_value=null;s.difference_pct=null;s.label=`${mutualFit.desirability}% relevans för motparten`;}
-    else s.label=`${mutualFit.desirability}% relevans för motparten`;
+    if(!targetValue){s.target_value=null;s.difference_pct=null;s.label=relevanceLevel(mutualFit.desirability);}
+    else s.label=relevanceLevel(mutualFit.desirability);
     add(s);
   }
 
@@ -244,8 +250,9 @@ export async function GET() {
     wantsByUser.set(w.user_id,arr);
   }
 
-  // Rank first. Expensive bundle work happens only for the 30 matches the user can actually see.
-  const rankedMatches=(candidates as MatchCard[]).map(card=>{
+  // Rank match quality before bundle work. Mutual matches are judged in both directions:
+  // the weakest side matters, because a great one-way fit is not a great trade if the other side barely wants anything back.
+  const scoredMatches=(candidates as MatchCard[]).map(card=>{
     const ranked=myWants.map(w=>({w,...relevance(card,w)})).sort((a,b)=>b.score-a.score);
     const best=ranked[0];
     if(!best || best.score<60)return null;
@@ -258,8 +265,32 @@ export async function GET() {
       }
     }
     const isMutual=mutualScore>=60;
-    return {...card,wanted_query:best.w.query,match_score:Math.min(99,best.score+(isMutual?4:0)),is_mutual:isMutual,match_reason:best.reason,matched_terms:best.matched,mutual_card_title:isMutual?mutualCardTitle:null,mutual_want_query:isMutual?mutualWantQuery:null};
-  }).filter(Boolean).sort((a:any,b:any)=>Number(b.is_mutual)-Number(a.is_mutual)||b.match_score-a.match_score).slice(0,30);
+    const mutualStrength=isMutual?Math.min(best.score,mutualScore):0;
+    const combinedStrength=isMutual?Math.round(best.score*0.55+mutualScore*0.45):best.score;
+    return {
+      ...card,
+      wanted_query:best.w.query,
+      match_score:combinedStrength,
+      mutual_strength:mutualStrength,
+      reverse_match_score:isMutual?mutualScore:null,
+      is_mutual:isMutual,
+      match_reason:best.reason,
+      matched_terms:best.matched,
+      mutual_card_title:isMutual?mutualCardTitle:null,
+      mutual_want_query:isMutual?mutualWantQuery:null
+    };
+  }).filter(Boolean) as any[];
+
+  const mutualMatches=scoredMatches
+    .filter(m=>m.is_mutual)
+    .sort((a,b)=>b.mutual_strength-a.mutual_strength || b.match_score-a.match_score)
+    .slice(0,24);
+  const oneWayLimit=mutualMatches.length?6:12;
+  const oneWayMatches=scoredMatches
+    .filter(m=>!m.is_mutual)
+    .sort((a,b)=>b.match_score-a.match_score)
+    .slice(0,oneWayLimit);
+  const rankedMatches=[...mutualMatches,...oneWayMatches];
 
   const matches=(rankedMatches as any[]).map(card=>({
     ...card,

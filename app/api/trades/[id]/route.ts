@@ -14,13 +14,29 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{id:
     }
 
     const accepted=await sql`
-      with locked_trade as (
-        select tp.id,tp.proposer_id,tp.receiver_id
+      with relevant_trade_ids as materialized (
+        select ${id}::uuid as id
+        union
+        select distinct ti2.trade_id
+        from trade_items ti1
+        join trade_items ti2 on ti2.card_id=ti1.card_id
+        join trade_proposals tp2 on tp2.id=ti2.trade_id
+        where ti1.trade_id=${id}
+          and tp2.status='pending'
+      ),
+      proposal_locks as materialized (
+        select tp.id,tp.proposer_id,tp.receiver_id,tp.status
         from trade_proposals tp
-        where tp.id=${id}
-          and tp.receiver_id=${user.id}
-          and tp.status='pending'
-        for update
+        join relevant_trade_ids rti on rti.id=tp.id
+        order by tp.id
+        for update of tp
+      ),
+      locked_trade as (
+        select pl.id,pl.proposer_id,pl.receiver_id
+        from proposal_locks pl
+        where pl.id=${id}
+          and pl.receiver_id=${user.id}
+          and pl.status='pending'
       ),
       locked_cards as (
         select c.id,c.owner_id,c.is_active,c.locked_trade_id,ti.side
@@ -28,6 +44,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{id:
         join cards c on c.id=ti.card_id
         join locked_trade lt on lt.id=ti.trade_id
         where ti.trade_id=${id}
+        order by c.id
         for update of c
       ),
       validation as (
@@ -192,33 +209,181 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{id:
   }
 
   if(action==='decline'){
-    if(trade.receiver_id!==user.id || trade.status!=='pending') return NextResponse.json({error:'Förslaget kan inte avböjas.'},{status:409});
-    await sql`update trade_proposals set status='declined' where id=${id}`;
+    // Do not trust the earlier trade snapshot for a terminal state transition.
+    // The conditional UPDATE is the authority, so a concurrent accept/counter/cancel
+    // cannot be overwritten by a stale decline request.
+    const declined=await sql`
+      update trade_proposals
+      set status='declined'
+      where id=${id}
+        and receiver_id=${user.id}
+        and status='pending'
+      returning id
+    `;
+    if(declined.length!==1) return NextResponse.json({error:'Förslaget kan inte avböjas eftersom dess status har ändrats.'},{status:409});
   } else if(action==='cancel'){
-    if(trade.proposer_id!==user.id || trade.status!=='pending') return NextResponse.json({error:'Förslaget kan inte dras tillbaka.'},{status:409});
-    await sql`update trade_proposals set status='cancelled' where id=${id}`;
+    // Same compare-and-set rule as decline. A stale proposer request must never
+    // overwrite an accept/counter/other terminal transition that won the race.
+    const cancelled=await sql`
+      update trade_proposals
+      set status='cancelled'
+      where id=${id}
+        and proposer_id=${user.id}
+        and status='pending'
+      returning id
+    `;
+    if(cancelled.length!==1) return NextResponse.json({error:'Förslaget kan inte dras tillbaka eftersom dess status har ändrats.'},{status:409});
   } else if(action==='shipped'){
     if(trade.status!=='accepted') return NextResponse.json({error:'Bytet måste vara accepterat först.'},{status:409});
+
+    const tracking = typeof body?.tracking==='string' ? body.tracking.trim().slice(0,200) : '';
+
+    // Serialize shipped/received transitions on the same trade + fulfillment rows.
+    // This makes duplicate shipped requests idempotent and prevents an empty retry
+    // from erasing tracking information that was already stored.
     await sql`insert into trade_fulfillment(trade_id) values (${id}) on conflict (trade_id) do nothing`;
-    if(trade.proposer_id===user.id) await sql`update trade_fulfillment set proposer_shipped_at=coalesce(proposer_shipped_at,now()),tracking_proposer=${body.tracking||null},updated_at=now() where trade_id=${id}`;
-    else await sql`update trade_fulfillment set receiver_shipped_at=coalesce(receiver_shipped_at,now()),tracking_receiver=${body.tracking||null},updated_at=now() where trade_id=${id}`;
+    const shippedResult=await sql`
+      with locked_trade as materialized (
+        select tp.id,tp.proposer_id,tp.receiver_id,tp.status
+        from trade_proposals tp
+        where tp.id=${id}
+          and (tp.proposer_id=${user.id} or tp.receiver_id=${user.id})
+        for update of tp
+      ),
+      locked_fulfillment as materialized (
+        select f.*
+        from trade_fulfillment f
+        join locked_trade lt on lt.id=f.trade_id
+        where f.trade_id=${id}
+        for update of f
+      ),
+      marked_shipped as (
+        update trade_fulfillment f
+        set
+          proposer_shipped_at=case
+            when lt.proposer_id=${user.id} then coalesce(f.proposer_shipped_at,now())
+            else f.proposer_shipped_at
+          end,
+          receiver_shipped_at=case
+            when lt.receiver_id=${user.id} then coalesce(f.receiver_shipped_at,now())
+            else f.receiver_shipped_at
+          end,
+          tracking_proposer=case
+            when lt.proposer_id=${user.id} and ${tracking}<>'' then ${tracking}
+            else f.tracking_proposer
+          end,
+          tracking_receiver=case
+            when lt.receiver_id=${user.id} and ${tracking}<>'' then ${tracking}
+            else f.tracking_receiver
+          end,
+          updated_at=now()
+        from locked_trade lt,locked_fulfillment lf
+        where f.trade_id=lt.id
+          and lf.trade_id=f.trade_id
+          and lt.status='accepted'
+        returning f.trade_id
+      )
+      select (select count(*)::int from marked_shipped) as shipped_count
+    `;
+
+    const shipped:any=shippedResult[0];
+    if(!shipped || Number(shipped.shipped_count)!==1){
+      return NextResponse.json({error:'Bytet är inte längre i ett läge där leveransen kan markeras som skickad.'},{status:409});
+    }
   } else if(action==='received'){
     if(trade.status!=='accepted') return NextResponse.json({error:'Bytet måste vara accepterat först.'},{status:409});
+
+    // Accepted trades normally already have a fulfillment row. Keep this idempotent
+    // insert for older/incomplete data, then perform the state transition atomically.
     await sql`insert into trade_fulfillment(trade_id) values (${id}) on conflict (trade_id) do nothing`;
 
-    const [before]=await sql`select * from trade_fulfillment where trade_id=${id}`;
-    const isProposer=trade.proposer_id===user.id;
-    const otherHasShipped=isProposer ? !!before?.receiver_shipped_at : !!before?.proposer_shipped_at;
-    if(!otherHasShipped){
-      return NextResponse.json({error:'Du kan markera mottaget först när den andra personen har markerat sina kort som skickade.'},{status:409});
-    }
+    const receivedResult=await sql`
+      with locked_trade as materialized (
+        select tp.id,tp.proposer_id,tp.receiver_id,tp.status
+        from trade_proposals tp
+        where tp.id=${id}
+          and (tp.proposer_id=${user.id} or tp.receiver_id=${user.id})
+        for update of tp
+      ),
+      locked_fulfillment as materialized (
+        select f.*
+        from trade_fulfillment f
+        join locked_trade lt on lt.id=f.trade_id
+        where f.trade_id=${id}
+        for update of f
+      ),
+      selected_trade_cards as materialized (
+        select distinct ti.card_id
+        from trade_items ti
+        join locked_trade lt on lt.id=ti.trade_id
+      ),
+      locked_trade_cards as materialized (
+        select c.id,c.is_active,c.locked_trade_id
+        from cards c
+        join selected_trade_cards stc on stc.card_id=c.id
+        order by c.id
+        for update of c
+      ),
+      card_validation as (
+        select
+          (select count(*)::int from selected_trade_cards) as expected_count,
+          (select count(*)::int from locked_trade_cards lc
+            where lc.is_active=true and lc.locked_trade_id=${id}::uuid) as valid_count
+      ),
+      marked_received as (
+        update trade_fulfillment f
+        set
+          proposer_received_at=case
+            when lt.proposer_id=${user.id} then coalesce(f.proposer_received_at,now())
+            else f.proposer_received_at
+          end,
+          receiver_received_at=case
+            when lt.receiver_id=${user.id} then coalesce(f.receiver_received_at,now())
+            else f.receiver_received_at
+          end,
+          updated_at=now()
+        from locked_trade lt,locked_fulfillment lf,card_validation cv
+        where f.trade_id=lt.id
+          and lf.trade_id=f.trade_id
+          and lt.status='accepted'
+          and lf.proposer_shipped_at is not null
+          and lf.receiver_shipped_at is not null
+          and cv.expected_count>0
+          and cv.expected_count=cv.valid_count
+        returning f.trade_id,f.proposer_received_at,f.receiver_received_at
+      ),
+      completed_trade as (
+        update trade_proposals tp
+        set status='completed'
+        from marked_received mr,card_validation cv
+        where tp.id=mr.trade_id
+          and mr.proposer_received_at is not null
+          and mr.receiver_received_at is not null
+          and cv.expected_count>0
+          and cv.expected_count=cv.valid_count
+          and tp.status='accepted'
+        returning tp.id
+      ),
+      completed_cards as (
+        update cards c
+        set is_active=false,locked_trade_id=null
+        where exists (
+          select 1
+          from completed_trade ct
+          join trade_items ti on ti.trade_id=ct.id
+          where ti.card_id=c.id
+        )
+        returning c.id
+      )
+      select
+        (select count(*)::int from marked_received) as received_count,
+        (select count(*)::int from completed_trade) as completed_count,
+        (select count(*)::int from completed_cards) as completed_card_count
+    `;
 
-    if(isProposer) await sql`update trade_fulfillment set proposer_received_at=coalesce(proposer_received_at,now()),updated_at=now() where trade_id=${id}`;
-    else await sql`update trade_fulfillment set receiver_received_at=coalesce(receiver_received_at,now()),updated_at=now() where trade_id=${id}`;
-    const [f]=await sql`select * from trade_fulfillment where trade_id=${id}`;
-    if(f?.proposer_received_at && f?.receiver_received_at){
-      await sql`update trade_proposals set status='completed' where id=${id}`;
-      await sql`update cards set is_active=false,locked_trade_id=null where id in (select card_id from trade_items where trade_id=${id})`;
+    const received:any=receivedResult[0];
+    if(!received || Number(received.received_count)!==1){
+      return NextResponse.json({error:'Bytet kan inte markeras som mottaget eftersom leveransläget eller kortens status har ändrats. Uppdatera sidan och kontrollera bytet.'},{status:409});
     }
   } else return NextResponse.json({error:'Okänd åtgärd.'},{status:400});
   return NextResponse.json({ok:true});

@@ -1,11 +1,12 @@
 {
   "name": "kortbyte",
-  "version": "1.19.1",
+  "version": "1.19.18",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "qa": "node scripts/qa-static.mjs && node scripts/qa-critical-flows.mjs"
   },
   "dependencies": {
     "@neondatabase/auth": "0.5.0-beta",

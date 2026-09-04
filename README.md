@@ -1,3 +1,12 @@
+
+## v1.19.13 – Receiver decision clarity
+
+- Bytesdetaljen visas nu ur den inloggade användarens perspektiv: **Du får** och **Du ger**.
+- Inkommande pending-förslag får en tydlig beslutspunkt: **Acceptera bytet / Gör motbud / Avböj**.
+- Utgående pending-förslag förklarar att de väntar på motparten och kan dras tillbaka tills de accepteras.
+- Förslagets meddelande separeras visuellt från själva bytesvillkoren.
+- Statisk QA bevakar nu viewer-relative get/give-mappning och beslutsknapparna.
+
 # Kortbyte v1.1.0.0 — Neon migration
 
 Kortbyte är en mobilvänlig bytesplattform för samlarkort. v1.1.0 flyttar backend-grunden från Supabase till **Neon Postgres + Neon Auth**.
@@ -240,3 +249,154 @@ Projekt: **Kortbyte** i AWS Europe Central 1 (Frankfurt). Neon Auth är aktivera
 - Onboarding-komponenten ligger nu utanför navigationsfältet i korrekt HTML-struktur.
 - Gratisgränsen är konsekvent 50 kort även i `freeSlots` och plan-kortet.
 - Ingen SQL-migration tillkommer.
+
+## v1.19.2 – Stabilare API + testdata
+- Frontend läser API-svar säkert även om ett felaktigt/tomt svar skulle komma tillbaka.
+- Ett tomt svar ger inte längre `Unexpected end of JSON input`.
+- Utvecklingsmiljön får knapparna `Lägg in testdata` och `Rensa testdata`.
+- Testdata märks tydligt med `[TEST]` och blandas därför inte ihop med riktiga kort/sökningar.
+- Testdata skapas endast för den inloggade användaren.
+- Funktionen är automatiskt tillgänglig i lokal `development`.
+- I andra miljöer krävs `ALLOW_DEV_SEED=true`; standard är avstängt.
+- Rensning tar inte bort testkort som är låsta i ett aktivt byte.
+- Ingen SQL-migration tillkommer i v1.19.2.
+
+## v1.19.3 – Demoscenario för hela byteskärnan
+- Ny knapp `Skapa demoscenario` i lokal utvecklingsmiljö.
+- Skapar tre tydligt syntetiska samlarprofiler, deras kort och sökningar.
+- Skapar två garanterade ömsesidiga matchningssituationer mot den inloggade användaren.
+- Skapar dessutom ett färdigt väntande bytesförslag från demo-Anna till den inloggade användaren.
+- Du kan därmed testa matchning → bytesförslag → accept/motbud utan att logga in på flera riktiga konton.
+- All scenariodata märks `[TEST-DEMO]` eller använder interna `demo-v1193-`-ID:n.
+- `Rensa demoscenario` tar bort trade-relaterad demo-data först och därefter kort, sökningar och syntetiska profiler.
+- Funktionen är endast aktiv lokalt, eller explicit med `ALLOW_DEV_SEED=true`.
+- Ingen ny SQL-migration i v1.19.3.
+
+## v1.19.5 – QA-stabilisering
+
+- Demoscenariots POST/DELETE returnerar nu 401 för oinloggade användare i stället för att riskera null-reference/serverfel.
+- `npm run qa` kör nu både import-/grundkontroller och en separat kritisk flödeskontroll för accept, samtidighetslås, motbud, fulfillment/completion, databaskonstraints och demo-säkerhet.
+- Detta är statisk/invariantbaserad QA. Det ersätter inte end-to-end-test mot Neon med verkliga samtidiga requests.
+
+## v1.19.6 – deterministisk låsordning vid accept
+
+Stabiliseringsrelease med fokus på samtidiga acceptförsök.
+
+- Accept identifierar nu alla väntande bytesförslag som delar något av samma kort.
+- Berörda trade-rader låses i deterministisk `trade_proposals.id`-ordning innan korten låses.
+- Kort låses därefter i deterministisk `cards.id`-ordning.
+- Målbytet kontrolleras fortfarande som `pending` efter att proposal-låsen tagits.
+- Syftet är att minska risken för PostgreSQL-deadlocks när två konkurrerande trades accepteras samtidigt.
+- `npm run qa` omfattar nu 36 kritiska trade/schema/demo-invariants plus 22 interna importkontroller.
+
+Observera: detta är verifierat genom kodgranskning och statisk QA. Full samtidig runtime-test mot Neon är fortfarande inte utförd.
+
+## v1.19.7 – atomiskt mottagande och completion
+
+Stabiliseringsrelease för slutet av bytesflödet.
+
+- `received` låser nu både trade-raden och fulfillment-raden med `FOR UPDATE`.
+- Trade-status `accepted` återvalideras inne i den låsta databasoperationen.
+- Motpartens `shipped`-status återvalideras i samma operation.
+- Mottagningstid sätts idempotent med `coalesce(..., now())`.
+- `completed` sätts endast när båda mottagningstiderna finns i den atomiska operationens resultat.
+- Ingående kort inaktiveras och deras trade-lås släpps som del av samma SQL-statement som completion.
+- Det minskar risken för halvtillstånd vid dubbla klick, samtidiga `received`-requests eller avbrutna requests.
+- `npm run qa` omfattar nu 43 kritiska trade/schema/demo-invariants plus 22 interna importkontroller.
+
+Ingen SQL-migration tillkommer. Detta är verifierat genom kodgranskning och statisk/invariantbaserad QA; verkliga samtidiga requests mot Neon är fortfarande inte end-to-end-verifierade.
+
+
+## v1.19.8 – Atomic shipping/fulfillment
+- `shipped` låser trade + fulfillment innan leveransstatus ändras.
+- Upprepade `shipped`-anrop behåller första skickat-tidpunkten.
+- Tomma retries kan inte längre radera ett redan sparat spårningsnummer.
+- Tracking trimmas och begränsas till 200 tecken.
+- `shipped` och `received` använder samma låsordning för bättre concurrency-säkerhet.
+- Ingen SQL-migration krävs.
+
+## v1.19.9 – strikt fulfillment-state machine
+- `received` kräver nu att både avsändaren och mottagaren har markerat sina kort som skickade innan någon part kan markera mottaget.
+- Alla kort i bytet låses deterministiskt och återvalideras innan mottagningsstatus får ändras.
+- Ett kort måste fortfarande vara aktivt och låst till just det accepterade bytet; annars stoppas transitionen i stället för att skapa ett halvtillstånd.
+- Completion sker bara när båda har mottagit och samtliga trade-kort fortfarande passerar integritetskontrollen.
+- `npm run qa` utökas med state-machine-kontroller för dessa regler.
+- Ingen SQL-migration krävs.
+
+
+## v1.19.10 – terminala trade-statusar och API-state machine
+- `decline` och `cancel` är nu villkorliga compare-and-set-övergångar direkt i PostgreSQL. Ett gammalt anrop kan inte längre skriva över ett samtidigt accept/motbud eller annan statusändring.
+- Chatten låser trade-raden innan meddelandet skapas och tillåter nya meddelanden endast för `pending`, `accepted` eller `completed`. `declined`, `cancelled` och ersatta `countered`-förslag är skrivskyddade.
+- Review-route härleder alltid `subject_id` från det slutförda bytet på serversidan; API-klienten kan inte välja vem som betygsätts.
+- Review-kommentar trimmas och begränsas till 500 tecken, rating måste vara heltal 1–5 och endast deltagare i ett `completed` trade kan lämna/uppdatera omdöme.
+- `npm run qa` omfattar nu 74 kritiska trade/schema/demo-invariants plus 22 interna importkontroller.
+- Ingen SQL-migration krävs.
+
+Verifieringen är statisk/invariantbaserad. Full build och verklig end-to-end/concurrency-körning mot Neon återstår.
+
+## v1.19.11 – Frontend recovery & match UX
+- Fixar regressionsfel efter övergången till `apiJson`: dashboard-refresh, generella mutationer, AI-bildanalys, bilduppladdning och motbud refererade till gamla/odefinierade response-variabler.
+- Motbud laddar nu om dashboarden via `refresh()` i stället för en borttagen `load()`-funktion.
+- QA fångar nu dessa frontend-regressioner.
+- Matchstyrka visas kvalitativt (Mycket stark/Stark/Möjlig) i stället för som falskt precisa procenttal.
+- Tar bort den icke fungerande knappen ”Visa profil”; relevant förtroendedata visas redan direkt i matchkortet.
+- Förbättrade tomlägen för Matchningar, Mina kort och Jag söker, med tydliga nästa handlingar.
+- Bytesförslagsdialogen hjälper användaren att lägga upp ett byteskort om inget tillgängligt kort finns.
+
+## v1.19.12 – Exchange clarity
+
+Fokus: tydligare ömsesidighet och färre lågkvalitativa bytesförslag.
+
+- Ömsesidiga matchkort visar nu explicit vad användaren vill ha och vad motparten söker.
+- Ensidiga matcher tonas ned och använder CTA:n "Föreslå ändå" i stället för samma primära CTA som en ömsesidig match.
+- Bytesförslagsdialogen visar varför ett ömsesidigt förslag är relevant.
+- Relevanta egna kort markeras som rekommenderade och kan förväljas från `mutual_fit`-förslag.
+- En sammanfattning av erbjudandet visas innan det skickas.
+- Demo-scenariot i frontend representerar den nya ömsesidiga UX-logiken.
+
+QA i denna arbetsmiljö:
+- `npm run qa`: OK (22 interna imports, 74 kritiska invariants).
+- QA-skriptens syntax: OK.
+- Full TypeScript/Next.js-build: inte körd eftersom `node_modules` saknas i arbetskopian.
+
+## v1.19.14 – Counteroffer clarity
+- Motbudsmodalen visar nu **Nuvarande förslag** separat från **Ditt motbud**.
+- Båda vyerna använder användarperspektivet **Du får / Du ger**.
+- Kort som ingår i nuvarande förslag märks `Ingår nu`.
+- Skicka motbud är avstängt tills båda sidor innehåller kort och användaren faktiskt har ändrat förslaget.
+- En slutlig förhandsvisning visar exakt vilka kort som skickas i motbudet.
+
+
+## v1.19.15 – Next Action Fulfillment UX
+- Varje trade visar nu tydligt nästa steg utifrån faktisk status.
+- Leverans visas per part (Du / motpart) i stället för en missvisande numrerad ordning.
+- Motpartens spårningsnummer visas när det finns.
+- Tydligare copy för skickat, mottaget och väntelägen.
+- QA utökad med statiska kontroller för fulfillment-UX.
+
+
+## v1.19.16 – Action-first trade inbox
+- Mina byten sorterar nu efter faktisk nästa åtgärd i stället för bara backendordning.
+- Byten där användaren behöver agera visas i en separat grupp överst.
+- Pågående byten som väntar på motpart/leverans visas separat.
+- Avslutade, avböjda, tillbakadragna och ersatta förslag tonas ned och ligger i en hopfällbar historik.
+- Ett completed byte utan lämnat omdöme räknas fortfarande som något användaren behöver hantera.
+- Ingen SQL-migration krävs.
+
+
+## v1.19.17 – Action-first Dashboard
+
+- Startsidan prioriterar nu nästa åtgärd, ömsesidiga matcher och matchberedskap.
+- Plus/kommande billing har flyttats bort från hero-ytan eftersom billing inte är implementerad och nätverkseffekt är viktigare i detta skede.
+- Ny överblick visar antal byten som behöver användarens uppmärksamhet, antal ömsesidiga matcher och HAVE/WANT-underlag.
+- Matchgrund visar aktiva byteskort och sökningar samt leder till den datapunkt som saknas.
+- Ingen SQL-migration krävs.
+
+
+## v1.19.18 – Match Signal
+
+- Ömsesidiga matcher rankas nu på kvaliteten i båda riktningarna. Den svagare sidan väger in så att en stark ensidig träff inte ser ut som ett lika starkt byte.
+- Ömsesidiga matcher visas i en egen primär sektion.
+- Ensidiga träffar begränsas till 6 när ömsesidiga matcher finns, annars 12, för att minska brus utan att helt dölja möjligheter.
+- `Bäst för båda` är fortsatt primärt paketförslag. `Närmast i värde` märks tydligare som ett sekundärt alternativ och skapas endast bland kort som redan matchar motpartens sökningar.
+- Matchvärde används fortsatt som kvalitetsindikator, inte som sannolikhet.
